@@ -53,7 +53,10 @@ def apify_start(urls: list, token: str, actor_id: str) -> str:
     r = requests.post(
         f"{APIFY_BASE}/acts/{actor_id}/runs",
         params={"token": token},
-        json={"queries": urls},
+        json={
+            "queries": urls,
+            "profileScraperMode": "Profile details no email ($4 per 1k)",
+        },
         timeout=30,
     )
     r.raise_for_status()
@@ -132,7 +135,7 @@ def map_item(item: dict, fallback_email: str = "") -> dict:
     )
 
     return {
-        "Email":        item.get("email") or item.get("emailAddress") or fallback_email,
+        "Email":        fallback_email or item.get("email") or item.get("emailAddress") or "",
         "LinkedIn URL": clean_url(raw_url),
         "First Name":   item.get("firstName", ""),
         "Last Name":    item.get("lastName", ""),
@@ -281,8 +284,24 @@ if st.button("🚀 Scrape LinkedIn Profiles", type="primary"):
     # map to output schema
     results = []
     for item in items:
-        raw_url       = item.get("url") or item.get("linkedInUrl") or item.get("profileUrl") or ""
-        fallback_email = email_lookup.get(clean_url(raw_url), "")
+        # use lowercase linkedinUrl — harvestapi's actual field name
+        raw_url = (
+            item.get("linkedinUrl")
+            or item.get("linkedInUrl")
+            or item.get("url")
+            or item.get("profileUrl")
+            or ""
+        )
+        cleaned = clean_url(raw_url)
+        # look up email from the user's input CSV by matching on cleaned URL
+        fallback_email = email_lookup.get(cleaned, "")
+        # also try matching on just the slug in case URL format differs
+        if not fallback_email:
+            slug = slug_from_url(cleaned)
+            for k, v in email_lookup.items():
+                if slug and slug_from_url(k) == slug:
+                    fallback_email = v
+                    break
         results.append(map_item(item, fallback_email))
 
     result_df = pd.DataFrame(results, columns=["Email", "LinkedIn URL", "First Name", "Last Name", "Job Title", "Company"])
